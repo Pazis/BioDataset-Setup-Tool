@@ -150,9 +150,12 @@ def cmd_download(args):
 
 def cmd_organize(args):
     """
-    Αυτή η εντολή κάνει unzip και τακτοποιεί τα αρχεία σε φακέλους ανά Οικογένεια
+    Αυτή η εντολή κάνει unzip και τακτοποιεί τα αρχεία σε:
+    - high_quality (Complete Genome, Chromosome)
+    - low_quality (Scaffold, Contig)
+    Και μέσα σε αυτά, ανά Οικογένεια.
     """
-    print("📂 Οργάνωση Dataset ανά Οικογένεια...")
+    print("📂 Οργάνωση Dataset σε High/Low Quality και ανά Οικογένεια...")
     
     # 1. Έλεγχοι αρχείων
     if not Path(ZIP_FILE).exists():
@@ -162,11 +165,14 @@ def cmd_organize(args):
         print(f"❌ Δεν βρέθηκε το Excel {OUTPUT_FILTERED}. Τρέξε πρώτα 'filter'.")
         return
 
-    # 2. Φόρτωση Mapping (Accession -> Family)
-    print("📖 Διάβασμα Excel για αντιστοίχιση οικογενειών...")
+    # 2. Φόρτωση Mapping
+    print("📖 Διάβασμα Excel για αντιστοίχιση...")
     df = pd.read_excel(OUTPUT_FILTERED)
-    # Δημιουργούμε ένα dictionary: { 'GCA_123.1': 'Nostocaceae', ... }
+    
+    # Mapping Accession -> Family
     acc_to_family = dict(zip(df['accession'], df['family']))
+    # Mapping Accession -> Assembly Level
+    acc_to_level = dict(zip(df['accession'], df['assembly_level']))
 
     # 3. Unzip σε προσωρινό φάκελο
     temp_dir = Path("temp_ncbi_unzipped")
@@ -178,37 +184,46 @@ def cmd_organize(args):
 
     # 4. Δημιουργία Τελικής Δομής
     final_dir = Path(FINAL_DATASET_DIR)
-    if final_dir.exists(): shutil.rmtree(final_dir) # Καθαρισμός αν υπάρχει ήδη
+    if final_dir.exists(): shutil.rmtree(final_dir)
     final_dir.mkdir()
+    
+    # Δημιουργία υποφακέλων ποιότητας
+    (final_dir / "high_quality").mkdir()
+    (final_dir / "low_quality").mkdir()
 
     print("🚀 Μετακίνηση και οργάνωση αρχείων...")
     
-    # Η δομή του NCBI είναι: temp/ncbi_dataset/data/ACCESSION/
     data_path = temp_dir / "ncbi_dataset" / "data"
     
     count_moved = 0
-    # Iteration σε όλους τους φακέλους που βρήκαμε στο zip
+    
+    # Iteration σε όλους τους φακέλους
     for genome_dir in tqdm(list(data_path.iterdir())):
         if not genome_dir.is_dir(): continue
         
-        accession = genome_dir.name # Το όνομα του φακέλου είναι το accession (π.χ. GCA_...)
+        accession = genome_dir.name
         
-        # Βρίσκουμε την οικογένεια
+        # Ανάκτηση πληροφοριών από τα dictionaries
         family = acc_to_family.get(accession)
+        level = acc_to_level.get(accession)
         
-        if not family:
-            # Αν δεν βρούμε το accession ακριβώς, ίσως το zip έχει GCF αντί για GCA
-            # ή απλά είναι extra αρχείο. Το αγνοούμε ή το βάζουμε στα "Unclassified"
+        if not family or not level:
             continue
 
-        # Δημιουργία φακέλου οικογένειας (π.χ. Cyano_Benchmark_Dataset/Nostocaceae)
-        family_dir = final_dir / family
+        # Καθορισμός Quality Folder
+        level_lower = str(level).lower()
+        if 'complete' in level_lower or 'chromosome' in level_lower:
+            quality_folder = "high_quality"
+        else:
+            quality_folder = "low_quality"
+
+        # Δημιουργία διαδρομής: Dataset / Quality / Family
+        family_dir = final_dir / quality_folder / family
         family_dir.mkdir(parents=True, exist_ok=True)
         
-        # Αντιγραφή αρχείων (fna, gff, faa)
+        # Αντιγραφή αρχείων
         for file_path in genome_dir.glob("*"):
             if file_path.is_file():
-                # Κρατάμε το αρχικό όνομα αρχείου
                 shutil.copy(file_path, family_dir / file_path.name)
         
         count_moved += 1
@@ -218,8 +233,7 @@ def cmd_organize(args):
     shutil.rmtree(temp_dir)
     
     print(f"\n✅ Ολοκληρώθηκε! Οργανώθηκαν {count_moved} γονιδιώματα.")
-    print(f"📂 Τα δεδομένα σου είναι έτοιμα στο φάκελο: '{FINAL_DATASET_DIR}'")
-    print("   Κάθε οικογένεια έχει τον δικό της υποφάκελο.")
+    print(f"📂 Δομή φακέλων: {FINAL_DATASET_DIR} -> [high_quality / low_quality] -> [Family]")
 
 def main():
     parser = argparse.ArgumentParser()
