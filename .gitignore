@@ -5,6 +5,7 @@ __pycache__/
 
 #testing
 test/
+cyano-analyze
 
 # C extensions
 *.so
