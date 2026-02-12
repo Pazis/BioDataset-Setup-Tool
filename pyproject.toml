@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "genome_analyzer"
+version = "0.1.0"
+description = "A tool for Genomic Annotation stats and BGC analysis"
+dependencies = [
+    "pandas",
+    "matplotlib",
+    "seaborn",
+    "scipy",
+    "openpyxl"
+]
+requires-python = ">=3.8"
+
+[project.scripts]
+# This allows you to type 'genome-tool' in your terminal to run the script
+genome-tool = "genome_analyzer.main:main"
