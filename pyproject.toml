@@ -11,10 +11,14 @@ dependencies = [
     "matplotlib",
     "seaborn",
     "scipy",
-    "openpyxl"
+    "openpyxl",
+    "biopython>=1.82",
+    "requests>=2.32.5",
+    "tqdm>=4.67.3"
 ]
-requires-python = ">=3.8"
+requires-python = ">=3.13"
 
 [project.scripts]
 # This allows you to type 'genome-tool' in your terminal to run the script
 genome-tool = "genome_analyzer.main:main"
+genome-tool-fetch = "genome_fetcher.main:main"

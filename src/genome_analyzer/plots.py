@@ -63,10 +63,14 @@ def load_csv(file_path):
             return float(val.replace('%', ''))
         return float(val)
 
+    # Clean percentage columns for all 3 tools
     if 'Initial_Undesc_PCT' in df.columns:
         df['Initial_Undesc_PCT'] = df['Initial_Undesc_PCT'].apply(clean_pct)
     if 'Enhanced_Undesc_PCT' in df.columns:
         df['Enhanced_Undesc_PCT'] = df['Enhanced_Undesc_PCT'].apply(clean_pct)
+    if 'Prokka_Undesc_PCT' in df.columns:
+        df['Prokka_Undesc_PCT'] = df['Prokka_Undesc_PCT'].apply(clean_pct)
+        
     return df
 
 def enrich_data(df, gff_dir):
@@ -125,7 +129,7 @@ def enrich_data(df, gff_dir):
     return df
 
 # ---------------------------------------------------------
-# 2. STATISTICAL FUNCTIONS
+# 2. STATISTICAL FUNCTIONS (UNCHANGED - Initial vs Enhanced Only)
 # ---------------------------------------------------------
 def correlate_size(df):
     """
@@ -138,7 +142,6 @@ def correlate_size(df):
         return
 
     # 1. Normality Checks (Shapiro-Wilk)
-    # We need to check BOTH variables. If either is non-normal, we must use Spearman.
     stat_size, p_size = stats.shapiro(df['Genome_Size'])
     stat_hypo, p_hypo = stats.shapiro(df['Enhanced_Undesc_PCT'])
 
@@ -166,8 +169,8 @@ def correlate_size(df):
         print("-> No significant correlation.")
 
 def hypothetical_reduction(df):
-    """Performs normality test and paired t-test/Wilcoxon on reduction data."""
-    print("\n--- 1. Statistical Analysis: Hypothetical Reduction ---")
+    """Performs normality test and paired t-test/Wilcoxon on reduction data (Initial vs Enhanced)."""
+    print("\n--- 1. Statistical Analysis: Hypothetical Reduction (Initial vs Enhanced) ---")
 
     diff = df['Initial_Undesc_PCT'] - df['Enhanced_Undesc_PCT']
 
@@ -196,9 +199,9 @@ def hypothetical_reduction(df):
     return test_name, p_val, diff.mean()
 
 def per_database_increase(df):
-    """Calculates percentage increase for specific database columns."""
+    """Calculates percentage increase for specific database columns (Initial vs Enhanced)."""
     print("\n" + "="*60)
-    print("FUNCTIONAL GAINS: PERCENTAGE INCREASE PER DB")
+    print("FUNCTIONAL GAINS: PERCENTAGE INCREASE PER DB (Initial -> Enhanced)")
     print("="*60)
 
     metrics = ['GO_entries', 'COG_entries', 'KEGG_entries', 'EC_entries']
@@ -225,7 +228,7 @@ def per_database_increase(df):
     return pct_increases
 
 def total_improvement(df):
-    """Calculates the relative reduction percentage."""
+    """Calculates the relative reduction percentage (Initial vs Enhanced)."""
     # Avoid division by zero
     raw_improvement = (
         (df['Initial_Undesc_PCT'] - df['Enhanced_Undesc_PCT']) / 
@@ -245,66 +248,96 @@ def total_improvement(df):
     return avg_total_improvement
 
 # ---------------------------------------------------------
-# 3. PLOTTING FUNCTION
+# 3. PLOTTING FUNCTION (MODIFIED TO INCLUDE PROKKA)
 # ---------------------------------------------------------
 
 def generate_plots(df, test_name, p_val, pct_increases, avg_total_improvement, OUTPUT_DIR):
-    """Generates Figures 1 through 6."""
+    """Generates Figures 1 through 7, including Prokka in visualizations."""
+    
     metrics = ['GO_entries', 'COG_entries', 'KEGG_entries', 'EC_entries']
 
-    # Figure 1: Paired Boxplot
-    print("\n--- Generating Figure 1 (Paired Boxplot) ---")
+    # -------------------------------------------------------
+    # Figure 1: Comparison Boxplot (Prokka vs Initial vs Enhanced)
+    # -------------------------------------------------------
+    print("\n--- Generating Figure 1 (Comparison Boxplot) ---")
+    
+    # We melt all 3 columns now
+    melt_vars = ['Initial_Undesc_PCT', 'Enhanced_Undesc_PCT']
+    if 'Prokka_Undesc_PCT' in df.columns:
+        melt_vars.insert(0, 'Prokka_Undesc_PCT') # Add Prokka first
+        
     df_long = pd.melt(df, 
                       id_vars=['File'], 
-                      value_vars=['Initial_Undesc_PCT', 'Enhanced_Undesc_PCT'],
+                      value_vars=melt_vars,
                       var_name='Condition', value_name='Hypothetical_Percentage')
+    
     df_long['Condition'] = df_long['Condition'].replace({
-        'Initial_Undesc_PCT': 'Initial (Bakta)', 'Enhanced_Undesc_PCT': 'Enhanced (Pipeline)'
+        'Prokka_Undesc_PCT': 'Prokka',
+        'Initial_Undesc_PCT': 'Initial (Bakta)', 
+        'Enhanced_Undesc_PCT': 'Enhanced (Pipeline)'
     })
-    plt.figure(figsize=(8, 6))
+    
+    plt.figure(figsize=(9, 6))
+    # Using a 3-color palette
     sns.boxplot(x='Condition', y='Hypothetical_Percentage', data=df_long, palette="Set2")
-    plt.title(f"Reduction in Hypothetical Coding Space\n({test_name}, p < {p_val:.1e})")
+    
+    # Title notes the significance between Init/Enhanced, but plot shows all 3
+    plt.title(f"Comparison of Undescribed Coding Space\n(Init vs Enhanced: {test_name}, p < {p_val:.1e})")
     plt.ylabel("Undescribed Coding Space (%)")
     plt.savefig(f"{OUTPUT_DIR}/Figure1_Hypothetical_Reduction.png", dpi=300)
 
+    # -------------------------------------------------------
     # Figure 2: Functional Gains (Counts)
+    # -------------------------------------------------------
     print("\n--- Generating Figure 2 (Functional Gains Counts) ---")
     plot_data = []
+    
+    # List of prefixes to check
+    prefixes = [('Prokka', 'Prokka'), ('Initial', 'Initial'), ('Enhanced', 'Enhanced')]
+    
     for metric in metrics:
-        col_init = f'Initial_{metric}'
-        col_enh = f'Enhanced_{metric}'
-        if col_init in df.columns and col_enh in df.columns:
-            init_sum = pd.to_numeric(df[col_init], errors='coerce').sum()
-            enh_sum = pd.to_numeric(df[col_enh], errors='coerce').sum()
-            plot_data.append({'Metric': metric.replace('_entries', ''), 'Condition': 'Initial', 'Count': init_sum})
-            plot_data.append({'Metric': metric.replace('_entries', ''), 'Condition': 'Enhanced', 'Count': enh_sum})
+        clean_metric_name = metric.replace('_entries', '')
+        
+        for prefix, label in prefixes:
+            col_name = f'{prefix}_{metric}'
+            if col_name in df.columns:
+                total_sum = pd.to_numeric(df[col_name], errors='coerce').sum()
+                plot_data.append({'Metric': clean_metric_name, 'Condition': label, 'Count': total_sum})
+                
     if plot_data:
         df_counts = pd.DataFrame(plot_data)
-        plt.figure(figsize=(10, 6))
+        plt.figure(figsize=(12, 6))
         sns.barplot(x='Metric', y='Count', hue='Condition', data=df_counts, palette="colorblind")
         plt.title("Total Functional Annotations Recovered")
         plt.ylabel("Total Count")
+        plt.legend(title="Tool")
         plt.savefig(f"{OUTPUT_DIR}/Figure2_Functional_Gains.jpeg", dpi=300)
 
-    # Figure 3: Contigs vs Hypotheticals
+    # -------------------------------------------------------
+    # Figure 3: Contigs vs Hypotheticals (Scatter with Prokka)
+    # -------------------------------------------------------
     print("\n--- Generating Figure 3 (Contigs vs Hypotheticals) ---")
     
-    # Only plot if we successfully added the Contigs column
     if 'Contigs' in df.columns and df['Contigs'].sum() > 0:
         df_sorted = df.sort_values(by='Contigs')
         
         plt.figure(figsize=(10, 6))
         
-        # Plot Initial (Grey)
+        # 1. Prokka (Blue) - if exists
+        if 'Prokka_Undesc_PCT' in df.columns:
+            plt.plot(df_sorted['Contigs'], df_sorted['Prokka_Undesc_PCT'], 
+                     marker='^', label='Prokka', linestyle='--', color='blue', alpha=0.6)
+
+        # 2. Initial (Grey)
         plt.plot(df_sorted['Contigs'], df_sorted['Initial_Undesc_PCT'], 
-                 marker='o', label='Initial', linestyle='-', color='grey', alpha=0.7)
+                 marker='o', label='Initial (Bakta)', linestyle='-', color='grey', alpha=0.7)
         
-        # Plot Enhanced (Red)
+        # 3. Enhanced (Red)
         plt.plot(df_sorted['Contigs'], df_sorted['Enhanced_Undesc_PCT'], 
-                 marker='o', label='Enhanced', linestyle='-', color='red', alpha=0.7)
+                 marker='o', label='Enhanced', linestyle='-', color='red', alpha=0.8)
         
         plt.title("Impact of Assembly Quality on Annotations")
-        plt.xlabel("Number of Contigs (calculated from GFFs)")
+        plt.xlabel("Number of Contigs")
         plt.ylabel("Undescribed Coding Space (%)")
         plt.legend()
         plt.grid(True, linestyle='--', alpha=0.5)
@@ -312,25 +345,39 @@ def generate_plots(df, test_name, p_val, pct_increases, avg_total_improvement, O
     else:
         print("Skipping Figure 3: No GFF directory provided or no contigs found.")
 
-    # Figure 4: Pseudogenes
+    # -------------------------------------------------------
+    # Figure 4: Pseudogenes (Bar Plot)
+    # -------------------------------------------------------
     print("\n--- Generating Figure 4 (Pseudogenes) ---")
-    if 'Initial_Pseudogene_candidates' in df.columns:
-        pseudo_data = []
-        for _, row in df.iterrows():
-            pseudo_data.append({'File': row['File'], 'Condition': 'Initial', 'Count': row['Initial_Pseudogene_candidates']})
-            pseudo_data.append({'File': row['File'], 'Condition': 'Enhanced', 'Count': row['Enhanced_Pseudogene_candidates']})
+    
+    pseudo_cols = [
+        ('Prokka_Pseudogene_candidates', 'Prokka'),
+        ('Initial_Pseudogene_candidates', 'Initial'), 
+        ('Enhanced_Pseudogene_candidates', 'Enhanced')
+    ]
+    
+    pseudo_data = []
+    for _, row in df.iterrows():
+        for col, label in pseudo_cols:
+            if col in df.columns:
+                pseudo_data.append({'File': row['File'], 'Condition': label, 'Count': row[col]})
+
+    if pseudo_data:
         df_pseudo = pd.DataFrame(pseudo_data)
         plt.figure(figsize=(12, 6))
+        # Use simple barplot or grouped barplot
         sns.barplot(x='File', y='Count', hue='Condition', data=df_pseudo, palette="viridis")
         plt.title("Comparison of Detected Pseudogenes")
-        plt.xticks([]) # Hide x-axis labels for clarity
+        plt.xticks([]) # Hide x-axis labels if too many genomes
         plt.ylabel("Number of Pseudogenes")
         plt.tight_layout()
         plt.savefig(f"{OUTPUT_DIR}/Figure4_Pseudogene_Addition.png", dpi=300)
 
-    # Figure 5: Total Improvement
-    print("\n--- Generating Figure 5 (Total Improvement) ---")
-    # Recalculate if missing from df
+    # -------------------------------------------------------
+    # Figure 5: Total Improvement (Initial vs Enhanced ONLY)
+    # -------------------------------------------------------
+    print("\n--- Generating Figure 5 (Total Improvement - Init vs Enh) ---")
+    # This plot remains strictly about the pipeline efficiency (Bakta vs Enhanced)
     if 'Rel_Reduction_PCT' not in df.columns:
          raw_improvement = ((df['Initial_Undesc_PCT'] - df['Enhanced_Undesc_PCT']) / df['Initial_Undesc_PCT'].replace(0, 1)) * 100
          df['Rel_Reduction_PCT'] = raw_improvement.abs()
@@ -338,51 +385,49 @@ def generate_plots(df, test_name, p_val, pct_increases, avg_total_improvement, O
     plt.figure(figsize=(10, 6))
     sns.barplot(x='File', y='Rel_Reduction_PCT', data=df, palette="viridis")
     plt.axhline(avg_total_improvement, color='red', linestyle='--', label=f'Mean Improvement ({avg_total_improvement:.1f}%)')
-    plt.title("Pipeline Efficiency: % of Hypothetical Proteins Annotated")
+    plt.title("Pipeline Efficiency: % of Hypothetical Proteins Annotated\n(Initial -> Enhanced)")
     plt.ylabel("Relative Reduction (%)")
     plt.xlabel("Genomes")
-    plt.xticks([]) # Hide x-axis labels for clarity
+    plt.xticks([]) 
     plt.legend()
     plt.tight_layout()
     plt.savefig(f"{OUTPUT_DIR}/Figure5_Total_Improvement.png", dpi=300)
 
-    # Figure 6: Percentage Increase per DB Bar Chart
-    print("\n--- Generating Figure 6 (DB % Increase) ---")
+    # -------------------------------------------------------
+    # Figure 6: DB Percentage Increase (Initial vs Enhanced ONLY)
+    # -------------------------------------------------------
+    print("\n--- Generating Figure 6 (DB % Increase - Init vs Enh) ---")
     if pct_increases:
         db_df = pd.DataFrame(list(pct_increases.items()), columns=['Database', 'Percent_Increase'])
-        
         plt.figure(figsize=(8, 6))
         ax = sns.barplot(x='Database', y='Percent_Increase', data=db_df, palette="muted")
-        
-        # Add text labels on top of bars
         for i in ax.containers:
             ax.bar_label(i, fmt='%.1f%%', padding=3)
-            
-        plt.title("Percentage Increase in Functional Annotations per Database")
+        plt.title("Percentage Increase in Annotations (Initial -> Enhanced)")
         plt.ylabel("Increase (%)")
         plt.ylim(0, db_df['Percent_Increase'].max() * 1.15) 
         plt.tight_layout()
         plt.savefig(f"{OUTPUT_DIR}/Figure6_DB_Percentage_Increase.png", dpi=300)
-        print(f"-> Saved {OUTPUT_DIR}/Figure6_DB_Percentage_Increase.png")
 
     print(f"\nDone! Check the '{OUTPUT_DIR}' folder.")
 
+    # -------------------------------------------------------
+    # Figure 7: Genome Size Correlation (Enhanced only)
+    # -------------------------------------------------------
     if 'Genome_Size_MB' in df.columns and df['Genome_Size_MB'].sum() > 0:
         print("\n--- Generating Figure 7 (Genome Size Correlation) ---")
         plt.figure(figsize=(10, 6))
-        
-        # Regression Plot with confidence interval
         sns.regplot(x='Genome_Size_MB', y='Enhanced_Undesc_PCT', data=df, 
-                    scatter_kws={'color': 'blue', 'alpha': 0.6}, 
-                    line_kws={'color': 'red'})
+                    scatter_kws={'color': 'red', 'alpha': 0.6, 'label': 'Enhanced'}, 
+                    line_kws={'color': 'darkred'})
         
         plt.title("Genome Size vs. Remaining Hypothetical Proteins")
         plt.xlabel("Genome Size (Mb)")
         plt.ylabel("Enhanced Undescribed Coding Space (%)")
+        plt.legend()
         plt.grid(True, linestyle='--', alpha=0.3)
         plt.savefig(f"{OUTPUT_DIR}/Figure7_Size_vs_Hypotheticals.png", dpi=300)
         plt.close()
-        print(f"-> Saved {OUTPUT_DIR}/Figure7_Size_vs_Hypotheticals.png")
 
 # ---------------------------------------------------------
 # 4. MODULE ENTRY POINT (To be called from main.py)
@@ -415,7 +460,7 @@ def cmd_plot(args):
     else:
         print("3. [WARNING] No GFF directory detected (-g). Skipping contig counting.")
 
-    # 2. Run Analysis
+    # 2. Run Analysis (Strictly Initial vs Enhanced)
     test_name, p_val, _ = hypothetical_reduction(df)
     pct_increases = per_database_increase(df)
     avg_total_improvement = total_improvement(df)
@@ -425,5 +470,5 @@ def cmd_plot(args):
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
 
-    # 4. Generate Plots
+    # 4. Generate Plots (Includes Prokka)
     generate_plots(df, test_name, p_val, pct_increases, avg_total_improvement, output_dir)
