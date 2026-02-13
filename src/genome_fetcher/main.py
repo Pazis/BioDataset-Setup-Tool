@@ -1,6 +1,4 @@
 import argparse
-import sys
-import json
 import time
 import shutil
 import zipfile

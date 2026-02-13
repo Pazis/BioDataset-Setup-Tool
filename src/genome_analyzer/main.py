@@ -1,6 +1,4 @@
 import argparse
-import os
-import glob
 from . import bgc
 from . import plots
 from . import prokka_update

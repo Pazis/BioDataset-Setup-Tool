@@ -20,7 +20,7 @@ def count_unique_contigs(gff_path):
                 if len(columns) > 0:
                     unique_contigs.add(columns[0])
         return len(unique_contigs)
-    except Exception as e:
+    except Exception:
         return 0
 
 def calculate_genome_size(gff_path):
@@ -53,7 +53,7 @@ def calculate_genome_size(gff_path):
                     except ValueError:
                         continue
         return sum(contig_sizes.values())
-    except Exception as e:
+    except Exception:
         return 0
 
 def load_csv(file_path):
@@ -75,11 +75,11 @@ def load_csv(file_path):
 
 def enrich_data(df, gff_dir):
     """Adds 'Contigs' and 'Genome_Size' columns from GFF files."""
-    print(f"\n--- DEBUG: Calculating Contigs & Genome Size ---")
+    print("\n--- DEBUG: Calculating Contigs & Genome Size ---")
     print(f"1. Looking in directory: '{gff_dir}'")
     
     if not gff_dir or not os.path.isdir(gff_dir):
-        print(f"   [ERROR] Directory not found.")
+        print("   [ERROR] Directory not found.")
         return df
 
     # Map files
