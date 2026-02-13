@@ -8,6 +8,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 from tqdm import tqdm
 
+
 # Ρυθμίσεις
 TAXON = "cyanobacteria"  
 OUTPUT_RAW = "cyanobacteria_raw.csv"
