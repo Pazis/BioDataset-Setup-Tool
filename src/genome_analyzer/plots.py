@@ -21,13 +21,43 @@ def count_unique_contigs(gff_path):
                     unique_contigs.add(columns[0])
         return len(unique_contigs)
     except Exception as e:
-        print(f"Warning: Could not count contigs for {gff_path}: {e}")
         return 0
-    
-def load_csv(file_path):
-    """Loads the CSV and cleans percentage columns."""
-    df = pd.read_csv(file_path)
 
+def calculate_genome_size(gff_path):
+    """Calculates total genome size (bp) from a GFF file."""
+    contig_sizes = {}
+    try:
+        with open(gff_path, 'r') as file:
+            for line in file:
+                line = line.strip()
+                if not line: continue
+                
+                # Method 1: Header (Accurate)
+                if line.startswith('##sequence-region'):
+                    parts = line.split()
+                    if len(parts) >= 4:
+                        contig_sizes[parts[1]] = int(parts[3])
+                    continue
+
+                if line.startswith('#'): continue
+                
+                # Method 2: Features (Fallback)
+                cols = line.split('\t')
+                if len(cols) >= 5:
+                    seqid = cols[0]
+                    try:
+                        end = int(cols[4])
+                        # Keep the largest coordinate seen for this contig
+                        if end > contig_sizes.get(seqid, 0):
+                            contig_sizes[seqid] = end
+                    except ValueError:
+                        continue
+        return sum(contig_sizes.values())
+    except Exception as e:
+        return 0
+
+def load_csv(file_path):
+    df = pd.read_csv(file_path)
     def clean_pct(val):
         if isinstance(val, str):
             return float(val.replace('%', ''))
@@ -39,87 +69,101 @@ def load_csv(file_path):
         df['Enhanced_Undesc_PCT'] = df['Enhanced_Undesc_PCT'].apply(clean_pct)
     return df
 
-def enrich_with_contigs(df, gff_dir):
-    print(f"\n--- DEBUG: Calculating Contig Counts ---")
+def enrich_data(df, gff_dir):
+    """Adds 'Contigs' and 'Genome_Size' columns from GFF files."""
+    print(f"\n--- DEBUG: Calculating Contigs & Genome Size ---")
     print(f"1. Looking in directory: '{gff_dir}'")
     
     if not gff_dir or not os.path.isdir(gff_dir):
-        print(f"   [ERROR] Directory not found or empty argument.")
+        print(f"   [ERROR] Directory not found.")
         return df
 
-    # 1. Map all available GFFs
-    all_gffs = glob.glob(os.path.join(gff_dir, "*")) # Get EVERYTHING to see what's there
+    # Map files
+    all_gffs = glob.glob(os.path.join(gff_dir, "*"))
     gff_files = [f for f in all_gffs if f.endswith('.gff') or f.endswith('.gff3')]
-    
     print(f"2. Found {len(gff_files)} GFF files.")
-    if len(gff_files) > 0:
-        print(f"   Example file from folder: '{os.path.basename(gff_files[0])}'")
-    else:
-        print("   [ERROR] No .gff or .gff3 files found! Check extensions.")
-        return df
-
-    # Create Mapping Dictionary
+    
     gff_map = {}
     for p in gff_files:
         base = os.path.basename(p)
-        
         # Strategy A: Exact Name
         gff_map[base] = p
+        # Strategy B: No extension
+        gff_map[os.path.splitext(base)[0]] = p
         
-        # Strategy B: Remove extensions
-        no_ext = os.path.splitext(base)[0] # removes .gff3
-        gff_map[no_ext] = p
-        
-        # Strategy C: Handle "_enhanced" suffix
-        # matches: "genome_enhanced.gff3" -> "genome"
-        clean_name = base.replace(".gff3", "").replace(".gff", "")
-        if clean_name.endswith("_enhanced"):
-            clean_name = clean_name.replace("_enhanced", "")
-        gff_map[clean_name] = p
+        # Strategy C: Clean suffix (handle _enhanced)
+        clean = base.replace(".gff3", "").replace(".gff", "")
+        if clean.endswith("_enhanced"): 
+            clean = clean.replace("_enhanced", "")
+        gff_map[clean] = p
 
-    # 2. Match CSV to GFF
-    print(f"3. Matching CSV entries ({len(df)} rows) to GFF files...")
-    if len(df) > 0:
-        print(f"   Example entry from CSV: '{df.iloc[0]['File']}'")
-
-    contig_counts = []
+    contigs = []
+    sizes = []
     matches = 0
     
+    # Iterate through CSV rows
     for index, row in df.iterrows():
         csv_name = str(row['File']).strip()
+        target = gff_map.get(csv_name)
         
-        # Try finding a match
-        target_path = gff_map.get(csv_name)
-        
-        # Try extensions
-        if not target_path:
-            target_path = gff_map.get(f"{csv_name}.gff")
-        if not target_path:
-            target_path = gff_map.get(f"{csv_name}.gff3")
-        # Try lowercase
-        if not target_path:
-            target_path = gff_map.get(csv_name.lower())
-
-        if target_path:
-            count = count_unique_contigs(target_path)
-            contig_counts.append(count)
+        if target:
+            contigs.append(count_unique_contigs(target))
+            sizes.append(calculate_genome_size(target))
             matches += 1
         else:
-            if index < 3: # Print first 3 failures
-                print(f"   [FAIL] CSV says '{csv_name}', but no match found in GFF folder.")
-            contig_counts.append(0)
+            if matches == 0 and index < 3:
+                print(f"   [FAIL] CSV says '{csv_name}' -> No match in GFF map.")
+            contigs.append(0)
+            sizes.append(0)
 
-    df['Contigs'] = contig_counts
-    print(f"4. Result: Matched {matches}/{len(df)} files.")
+    df['Contigs'] = contigs
+    df['Genome_Size'] = sizes
+    # Avoid division by zero for empty files
+    df['Genome_Size_MB'] = df['Genome_Size'].apply(lambda x: x / 1_000_000 if x > 0 else 0)
     
-    if matches == 0:
-        print("   [WARNING] Total failure to match. Your CSV names likely don't match GFF filenames.")
-        
+    print(f"4. Result: Enriched {matches}/{len(df)} files.")
     return df
 
 # ---------------------------------------------------------
 # 2. STATISTICAL FUNCTIONS
 # ---------------------------------------------------------
+def correlate_size(df):
+    """
+    Correlates Genome Size with Hypothetical % using Pearson (if normal) 
+    or Spearman (if non-normal).
+    """
+    print("\n--- 2. Genome Size Correlation ---")
+    if 'Genome_Size' not in df.columns or df['Genome_Size'].sum() == 0:
+        print("Skipping: No size data.")
+        return
+
+    # 1. Normality Checks (Shapiro-Wilk)
+    # We need to check BOTH variables. If either is non-normal, we must use Spearman.
+    stat_size, p_size = stats.shapiro(df['Genome_Size'])
+    stat_hypo, p_hypo = stats.shapiro(df['Enhanced_Undesc_PCT'])
+
+    print(f"   Normality (Genome Size): p={p_size:.5f}")
+    print(f"   Normality (Hypothetical %): p={p_hypo:.5f}")
+
+    # 2. Choose Test
+    if p_size > 0.05 and p_hypo > 0.05:
+        print("-> Both Normal. Using Pearson Correlation.")
+        test_type = "Pearson (r)"
+        corr, p_val = stats.pearsonr(df['Genome_Size'], df['Enhanced_Undesc_PCT'])
+    else:
+        print("-> Non-Normal Data. Using Spearman Correlation.")
+        test_type = "Spearman (rho)"
+        corr, p_val = stats.spearmanr(df['Genome_Size'], df['Enhanced_Undesc_PCT'])
+    
+    # 3. Report Results
+    print(f"   Correlation: {test_type}={corr:.3f}, p={p_val:.5e}")
+    
+    if p_val < 0.05:
+        strength = "Strong" if abs(corr) > 0.66 else "Moderate" if abs(corr) > 0.33 else "Weak"
+        direction = "Positive" if corr > 0 else "Negative"
+        print(f"-> Significant {strength} {direction} correlation detected.")
+    else:
+        print("-> No significant correlation.")
 
 def hypothetical_reduction(df):
     """Performs normality test and paired t-test/Wilcoxon on reduction data."""
@@ -218,12 +262,7 @@ def generate_plots(df, test_name, p_val, pct_increases, avg_total_improvement, O
         'Initial_Undesc_PCT': 'Initial (Bakta)', 'Enhanced_Undesc_PCT': 'Enhanced (Pipeline)'
     })
     plt.figure(figsize=(8, 6))
-    sns.violinplot(x='Condition', y='Hypothetical_Percentage', data=df_long, palette="Set2", inner=None)
-    sns.stripplot(x='Condition', y='Hypothetical_Percentage', data=df_long, color='black', alpha=0.5)
-    for i in range(len(df)):
-        y1 = df['Initial_Undesc_PCT'].iloc[i]
-        y2 = df['Enhanced_Undesc_PCT'].iloc[i]
-        plt.plot([0, 1], [y1, y2], color='grey', linewidth=0.5, alpha=0.5)
+    sns.boxplot(x='Condition', y='Hypothetical_Percentage', data=df_long, palette="Set2")
     plt.title(f"Reduction in Hypothetical Coding Space\n({test_name}, p < {p_val:.1e})")
     plt.ylabel("Undescribed Coding Space (%)")
     plt.savefig(f"{OUTPUT_DIR}/Figure1_Hypothetical_Reduction.png", dpi=300)
@@ -284,7 +323,7 @@ def generate_plots(df, test_name, p_val, pct_increases, avg_total_improvement, O
         plt.figure(figsize=(12, 6))
         sns.barplot(x='File', y='Count', hue='Condition', data=df_pseudo, palette="viridis")
         plt.title("Comparison of Detected Pseudogenes")
-        plt.xticks(rotation=45, ha='right')
+        plt.xticks([]) # Hide x-axis labels for clarity
         plt.ylabel("Number of Pseudogenes")
         plt.tight_layout()
         plt.savefig(f"{OUTPUT_DIR}/Figure4_Pseudogene_Addition.png", dpi=300)
@@ -301,8 +340,8 @@ def generate_plots(df, test_name, p_val, pct_increases, avg_total_improvement, O
     plt.axhline(avg_total_improvement, color='red', linestyle='--', label=f'Mean Improvement ({avg_total_improvement:.1f}%)')
     plt.title("Pipeline Efficiency: % of Hypothetical Proteins Annotated")
     plt.ylabel("Relative Reduction (%)")
-    plt.xlabel("Sample File")
-    plt.xticks(rotation=45, ha='right')
+    plt.xlabel("Genomes")
+    plt.xticks([]) # Hide x-axis labels for clarity
     plt.legend()
     plt.tight_layout()
     plt.savefig(f"{OUTPUT_DIR}/Figure5_Total_Improvement.png", dpi=300)
@@ -327,6 +366,23 @@ def generate_plots(df, test_name, p_val, pct_increases, avg_total_improvement, O
         print(f"-> Saved {OUTPUT_DIR}/Figure6_DB_Percentage_Increase.png")
 
     print(f"\nDone! Check the '{OUTPUT_DIR}' folder.")
+
+    if 'Genome_Size_MB' in df.columns and df['Genome_Size_MB'].sum() > 0:
+        print("\n--- Generating Figure 7 (Genome Size Correlation) ---")
+        plt.figure(figsize=(10, 6))
+        
+        # Regression Plot with confidence interval
+        sns.regplot(x='Genome_Size_MB', y='Enhanced_Undesc_PCT', data=df, 
+                    scatter_kws={'color': 'blue', 'alpha': 0.6}, 
+                    line_kws={'color': 'red'})
+        
+        plt.title("Genome Size vs. Remaining Hypothetical Proteins")
+        plt.xlabel("Genome Size (Mb)")
+        plt.ylabel("Enhanced Undescribed Coding Space (%)")
+        plt.grid(True, linestyle='--', alpha=0.3)
+        plt.savefig(f"{OUTPUT_DIR}/Figure7_Size_vs_Hypotheticals.png", dpi=300)
+        plt.close()
+        print(f"-> Saved {OUTPUT_DIR}/Figure7_Size_vs_Hypotheticals.png")
 
 # ---------------------------------------------------------
 # 4. MODULE ENTRY POINT (To be called from main.py)
@@ -355,7 +411,7 @@ def cmd_plot(args):
     # STRICT CHECK: If the argument exists, run the enrichment
     if gff_dir_arg:
         print("3. Flag detected. Running enrichment...")
-        df = enrich_with_contigs(df, gff_dir_arg)
+        df = enrich_data(df, gff_dir_arg)
     else:
         print("3. [WARNING] No GFF directory detected (-g). Skipping contig counting.")
 
@@ -363,6 +419,7 @@ def cmd_plot(args):
     test_name, p_val, _ = hypothetical_reduction(df)
     pct_increases = per_database_increase(df)
     avg_total_improvement = total_improvement(df)
+    size_correlation = correlate_size(df)
 
     # 3. Create Output Directory
     if not os.path.exists(output_dir):
