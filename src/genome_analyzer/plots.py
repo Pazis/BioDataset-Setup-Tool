@@ -256,6 +256,13 @@ def generate_plots(df, test_name, p_val, pct_increases, avg_total_improvement, O
     
     metrics = ['GO_entries', 'COG_entries', 'KEGG_entries', 'EC_entries']
 
+    TOOL_COLORS = {
+    'Prokka': '#0072B2',   # Strong Blue
+    'Initial': '#999999',  # Grey
+    'Enhanced': '#D55E00'  # Vermilion
+}
+    
+
     # -------------------------------------------------------
     # Figure 1: Comparison Boxplot (Prokka vs Initial vs Enhanced)
     # -------------------------------------------------------
@@ -279,7 +286,7 @@ def generate_plots(df, test_name, p_val, pct_increases, avg_total_improvement, O
     
     plt.figure(figsize=(9, 6))
     # Using a 3-color palette
-    sns.boxplot(x='Condition', y='Hypothetical_Percentage', data=df_long, palette="Set2")
+    sns.boxplot(x='Condition', y='Hypothetical_Percentage', data=df_long, palette=[TOOL_COLORS['Prokka'], TOOL_COLORS['Initial'], TOOL_COLORS['Enhanced']])
     
     # Title notes the significance between Init/Enhanced, but plot shows all 3
     plt.title(f"Comparison of Undescribed Coding Space\n(Init vs Enhanced: {test_name}, p < {p_val:.1e})")
@@ -307,7 +314,7 @@ def generate_plots(df, test_name, p_val, pct_increases, avg_total_improvement, O
     if plot_data:
         df_counts = pd.DataFrame(plot_data)
         plt.figure(figsize=(12, 6))
-        sns.barplot(x='Metric', y='Count', hue='Condition', data=df_counts, palette="colorblind")
+        sns.barplot(x='Metric', y='Count', hue='Condition', data=df_counts, palette=[TOOL_COLORS['Prokka'],TOOL_COLORS['Initial'],TOOL_COLORS['Enhanced']])
         plt.title("Total Functional Annotations Recovered")
         plt.ylabel("Total Count")
         plt.legend(title="Tool")
@@ -326,15 +333,15 @@ def generate_plots(df, test_name, p_val, pct_increases, avg_total_improvement, O
         # 1. Prokka (Blue) - if exists
         if 'Prokka_Undesc_PCT' in df.columns:
             plt.plot(df_sorted['Contigs'], df_sorted['Prokka_Undesc_PCT'], 
-                     marker='^', label='Prokka', linestyle='--', color='blue', alpha=0.6)
+                     marker='^', label='Prokka', linestyle='--', color=TOOL_COLORS['Prokka'], alpha=0.6)
 
         # 2. Initial (Grey)
         plt.plot(df_sorted['Contigs'], df_sorted['Initial_Undesc_PCT'], 
-                 marker='o', label='Initial (Bakta)', linestyle='-', color='grey', alpha=0.7)
+                 marker='o', label='Initial (Bakta)', linestyle='-', color=TOOL_COLORS['Initial'], alpha=0.7)
         
         # 3. Enhanced (Red)
         plt.plot(df_sorted['Contigs'], df_sorted['Enhanced_Undesc_PCT'], 
-                 marker='o', label='Enhanced', linestyle='-', color='red', alpha=0.8)
+                 marker='o', label='Enhanced', linestyle='-', color=TOOL_COLORS['Enhanced'], alpha=0.8)
         
         plt.title("Impact of Assembly Quality on Annotations")
         plt.xlabel("Number of Contigs")
@@ -400,7 +407,7 @@ def generate_plots(df, test_name, p_val, pct_increases, avg_total_improvement, O
     if pct_increases:
         db_df = pd.DataFrame(list(pct_increases.items()), columns=['Database', 'Percent_Increase'])
         plt.figure(figsize=(8, 6))
-        ax = sns.barplot(x='Database', y='Percent_Increase', data=db_df, palette="muted")
+        ax = sns.barplot(x='Database', y='Percent_Increase', data=db_df, palette="colorblind")
         for i in ax.containers:
             ax.bar_label(i, fmt='%.1f%%', padding=3)
         plt.title("Percentage Increase in Annotations (Initial -> Enhanced)")
@@ -417,8 +424,8 @@ def generate_plots(df, test_name, p_val, pct_increases, avg_total_improvement, O
     if 'Genome_Size_MB' in df.columns and df['Genome_Size_MB'].sum() > 0:
         print("\n--- Generating Figure 7 (Genome Size Correlation) ---")
         plt.figure(figsize=(10, 6))
-        sns.regplot(x='Genome_Size_MB', y='Enhanced_Undesc_PCT', data=df, 
-                    scatter_kws={'color': 'red', 'alpha': 0.6, 'label': 'Enhanced'}, 
+        sns.regplotplot(x='Genome_Size_MB', y='Enhanced_Undesc_PCT', data=df, 
+                    scatter_kws={'color': '#D55E00', 'label': 'Enhanced'}, 
                     line_kws={'color': 'darkred'})
         
         plt.title("Genome Size vs. Remaining Hypothetical Proteins")
